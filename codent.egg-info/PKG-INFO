@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: codent
+Version: 0.1.0
+Summary: A minimal coding agent
+Requires-Python: >=3.10
+Requires-Dist: anthropic
+Requires-Dist: python-dotenv
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"

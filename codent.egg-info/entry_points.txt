@@ -1,0 +1,2 @@
+[console_scripts]
+codent = codent.__main__:main
