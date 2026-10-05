@@ -140,6 +140,31 @@ def write_file(root: Path, path: str, content: str, approve=None) -> str:
     return _apply_change(root, path, content, approve)
 
 
+def delete_file(root: Path, path: str, approve=None) -> str:
+    full = _resolve(root, path)
+    if not full.is_file():
+        raise ToolError(f"not a file: {path} (only files can be deleted)")
+    try:
+        old_text = full.read_text()
+    except UnicodeDecodeError:
+        old_text = None
+    if old_text is None:
+        diff = f"(binary file {path} will be deleted)"
+    else:
+        diff = "".join(
+            difflib.unified_diff(
+                old_text.splitlines(keepends=True),
+                [],
+                fromfile=f"a/{path}",
+                tofile="/dev/null",
+            )
+        ) or f"(empty file {path} will be deleted)"
+    if approve is None or not approve(path, diff):
+        raise ToolError(f"user declined deleting {path}; nothing was deleted")
+    full.unlink()
+    return f"deleted {path}"
+
+
 TOOL_FUNCS = {
     "list_dir": list_dir,
     "read_file": read_file,
@@ -147,8 +172,9 @@ TOOL_FUNCS = {
     "search": search,
     "edit_file": edit_file,
     "write_file": write_file,
+    "delete_file": delete_file,
 }
-WRITE_TOOLS = {"edit_file", "write_file"}
+WRITE_TOOLS = {"edit_file", "write_file", "delete_file"}
 
 TOOL_SCHEMAS = [
     {
@@ -219,6 +245,15 @@ TOOL_SCHEMAS = [
                 "content": {"type": "string", "description": "Full file content."},
             },
             "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "delete_file",
+        "description": "Delete a single file (not a directory). The user approves each deletion.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "File path relative to project root."}},
+            "required": ["path"],
         },
     },
 ]

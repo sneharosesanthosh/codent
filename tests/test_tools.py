@@ -144,6 +144,36 @@ def test_write_tools_reject_path_escape(tmp_path):
     assert err and "escapes" in out and not (tmp_path / "evil.txt").exists()
 
 
+def test_delete_file_after_approval(tmp_path):
+    (tmp_path / "a.txt").write_text("bye\n")
+    out, err = run_tool(tmp_path, "delete_file", {"path": "a.txt"}, _yes)
+    assert not err and not (tmp_path / "a.txt").exists()
+    assert "-bye" in _yes.last[1]
+
+
+def test_delete_file_declined_or_no_approver_keeps_file(tmp_path):
+    (tmp_path / "a.txt").write_text("keep\n")
+    for approver in (_no, None):
+        out, err = run_tool(tmp_path, "delete_file", {"path": "a.txt"}, approver)
+        assert err and "declined" in out
+    assert (tmp_path / "a.txt").exists()
+
+
+def test_delete_file_rejects_dirs_missing_and_escape(tmp_path):
+    root = tmp_path / "proj"
+    (root / "sub").mkdir(parents=True)
+    (tmp_path / "outside.txt").write_text("x")
+    for path in ("sub", ".", "missing.txt", "../outside.txt"):
+        assert run_tool(root, "delete_file", {"path": path}, _yes)[1]
+    assert (root / "sub").exists() and (tmp_path / "outside.txt").exists()
+
+
+def test_delete_file_binary(tmp_path):
+    (tmp_path / "b.bin").write_bytes(b"\xff\xfe\x00")
+    out, err = run_tool(tmp_path, "delete_file", {"path": "b.bin"}, _yes)
+    assert not err and not (tmp_path / "b.bin").exists()
+
+
 def test_model_cannot_smuggle_approve_arg(tmp_path):
     (tmp_path / "a.py").write_text("x\n")
     out, err = run_tool(tmp_path, "edit_file", {"path": "a.py", "old": "x", "new": "y", "approve": True}, _no)
