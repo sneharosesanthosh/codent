@@ -1,3 +1,4 @@
+import difflib
 import os
 import re
 from fnmatch import fnmatch
@@ -95,12 +96,59 @@ def _cap(items: list[str]) -> str:
     return out
 
 
+def _apply_change(root: Path, path: str, new_text: str, approve) -> str:
+    """Show a diff, ask for approval, then write. `approve(path, diff) -> bool`."""
+    full = _resolve(root, path)
+    old_text = full.read_text() if full.exists() else ""
+    diff = "".join(
+        difflib.unified_diff(
+            old_text.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+        )
+    )
+    if approve is None or not approve(path, diff):
+        raise ToolError(f"user declined the change to {path}; nothing was written")
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_text(new_text)
+    return f"wrote {path}"
+
+
+def edit_file(root: Path, path: str, old: str, new: str, approve=None) -> str:
+    full = _resolve(root, path)
+    if not full.is_file():
+        raise ToolError(f"not a file: {path}")
+    if not old:
+        raise ToolError("'old' must not be empty; use write_file to create files")
+    try:
+        text = full.read_text()
+    except UnicodeDecodeError:
+        raise ToolError(f"not a text file: {path}")
+    count = text.count(old)
+    if count == 0:
+        raise ToolError("'old' text not found; read the file again and copy it exactly")
+    if count > 1:
+        raise ToolError(f"'old' text matches {count} places; include more surrounding lines to make it unique")
+    return _apply_change(root, path, text.replace(old, new), approve)
+
+
+def write_file(root: Path, path: str, content: str, approve=None) -> str:
+    full = _resolve(root, path)
+    if full.is_dir():
+        raise ToolError(f"is a directory: {path}")
+    return _apply_change(root, path, content, approve)
+
+
 TOOL_FUNCS = {
     "list_dir": list_dir,
     "read_file": read_file,
     "find_files": find_files,
     "search": search,
+    "edit_file": edit_file,
+    "write_file": write_file,
 }
+WRITE_TOOLS = {"edit_file", "write_file"}
 
 TOOL_SCHEMAS = [
     {
@@ -145,15 +193,45 @@ TOOL_SCHEMAS = [
             "required": ["pattern"],
         },
     },
+    {
+        "name": "edit_file",
+        "description": (
+            "Edit a file by replacing one exact piece of text. 'old' must match exactly once "
+            "(include surrounding lines if needed). The user approves each change."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path relative to project root."},
+                "old": {"type": "string", "description": "Exact existing text to replace."},
+                "new": {"type": "string", "description": "Replacement text."},
+            },
+            "required": ["path", "old", "new"],
+        },
+    },
+    {
+        "name": "write_file",
+        "description": "Create a new file or fully overwrite an existing one. The user approves each change.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path relative to project root."},
+                "content": {"type": "string", "description": "Full file content."},
+            },
+            "required": ["path", "content"],
+        },
+    },
 ]
 
 
-def run_tool(root: Path, name: str, args: dict) -> tuple[str, bool]:
-    """Returns (output, is_error)."""
+def run_tool(root: Path, name: str, args: dict, approve=None) -> tuple[str, bool]:
+    """Returns (output, is_error). `approve(path, diff) -> bool` gates file writes."""
     fn = TOOL_FUNCS.get(name)
     if fn is None:
         return f"unknown tool: {name}", True
     try:
+        if name in WRITE_TOOLS:
+            return fn(root, approve=approve, **args), False
         return fn(root, **args), False
     except ToolError as e:
         return str(e), True

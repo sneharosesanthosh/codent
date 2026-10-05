@@ -10,8 +10,9 @@ MAX_ITERATIONS = 20
 
 
 class Agent:
-    def __init__(self, root: Path, client=None, model: str | None = None):
+    def __init__(self, root: Path, client=None, model: str | None = None, approve=None):
         self.root = root.resolve()
+        self.approve = approve  # approve(path, diff) -> bool; None means deny all writes
         self.client = client or anthropic.Anthropic()
         self.model = model or os.getenv("CODENT_MODEL", "claude-sonnet-5-5")
         self.messages: list[dict] = []
@@ -35,7 +36,7 @@ class Agent:
             for block in resp.content:
                 if block.type == "tool_use":
                     print(f"  [tool] {block.name}({block.input})")
-                    output, is_error = run_tool(self.root, block.name, block.input)
+                    output, is_error = run_tool(self.root, block.name, block.input, self.approve)
                     results.append(
                         {
                             "type": "tool_result",

@@ -82,3 +82,69 @@ def test_errors_are_returned_not_raised(tmp_path):
     assert run_tool(tmp_path, "read_file", {"path": "missing"})[1]
     assert run_tool(tmp_path, "nope", {})[1]
     assert run_tool(tmp_path, "read_file", {})[1]
+
+
+def _yes(path, diff):
+    _yes.last = (path, diff)
+    return True
+
+
+def _no(path, diff):
+    return False
+
+
+def test_edit_file_applies_after_approval(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\ny = 2\n")
+    out, err = run_tool(tmp_path, "edit_file", {"path": "a.py", "old": "x = 1", "new": "x = 10"}, _yes)
+    assert not err
+    assert (tmp_path / "a.py").read_text() == "x = 10\ny = 2\n"
+    assert "-x = 1" in _yes.last[1] and "+x = 10" in _yes.last[1]
+
+
+def test_edit_file_declined_or_no_approver_writes_nothing(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\n")
+    args = {"path": "a.py", "old": "x = 1", "new": "x = 2"}
+    for approver in (_no, None):
+        out, err = run_tool(tmp_path, "edit_file", args, approver)
+        assert err and "declined" in out
+    assert (tmp_path / "a.py").read_text() == "x = 1\n"
+
+
+def test_edit_file_needs_exactly_one_match(tmp_path):
+    (tmp_path / "a.py").write_text("a\na\n")
+    out, err = run_tool(tmp_path, "edit_file", {"path": "a.py", "old": "zzz", "new": "q"}, _yes)
+    assert err and "not found" in out
+    out, err = run_tool(tmp_path, "edit_file", {"path": "a.py", "old": "a", "new": "q"}, _yes)
+    assert err and "2 places" in out
+    out, err = run_tool(tmp_path, "edit_file", {"path": "a.py", "old": "", "new": "q"}, _yes)
+    assert err
+    assert (tmp_path / "a.py").read_text() == "a\na\n"
+
+
+def test_edit_file_missing_file(tmp_path):
+    assert run_tool(tmp_path, "edit_file", {"path": "nope.py", "old": "a", "new": "b"}, _yes)[1]
+
+
+def test_write_file_creates_and_overwrites(tmp_path):
+    out, err = run_tool(tmp_path, "write_file", {"path": "new/dir/f.txt", "content": "hello\n"}, _yes)
+    assert not err and (tmp_path / "new/dir/f.txt").read_text() == "hello\n"
+    run_tool(tmp_path, "write_file", {"path": "new/dir/f.txt", "content": "bye\n"}, _yes)
+    assert (tmp_path / "new/dir/f.txt").read_text() == "bye\n"
+
+
+def test_write_file_declined_creates_nothing(tmp_path):
+    out, err = run_tool(tmp_path, "write_file", {"path": "f.txt", "content": "x"}, _no)
+    assert err and not (tmp_path / "f.txt").exists()
+
+
+def test_write_tools_reject_path_escape(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    out, err = run_tool(root, "write_file", {"path": "../evil.txt", "content": "x"}, _yes)
+    assert err and "escapes" in out and not (tmp_path / "evil.txt").exists()
+
+
+def test_model_cannot_smuggle_approve_arg(tmp_path):
+    (tmp_path / "a.py").write_text("x\n")
+    out, err = run_tool(tmp_path, "edit_file", {"path": "a.py", "old": "x", "new": "y", "approve": True}, _no)
+    assert err and (tmp_path / "a.py").read_text() == "x\n"
